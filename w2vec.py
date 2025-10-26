@@ -10,6 +10,7 @@ from sklearn.manifold import TSNE
 import numpy as np
 import matplotlib.pyplot as plt
 import random
+import pandas as pd
 
 charfilter = re.compile('[a-zA-Z]+')
 nltk.download('stopwords')
@@ -72,20 +73,95 @@ def plot_with_matplotlib(x_vals, y_vals, labels):
     plt.title('Tsne Visualización')
     plt.show()
 
-# En sentences se tiene que almacenar la información del dataset de noticias
-# Cada sentencia puede ser una opinión
-sentences = []
+# CARGAR EL DATASET CSV
+try:
+    # Cargar el dataset
+    df = pd.read_csv('dataset_limpio.csv')
+    print(f"Dataset cargado con {len(df)} filas")
+    print("Columnas disponibles:", df.columns.tolist())
 
+    # Creación del corpus a partir de la columna 'detalles_limpios' 
+    sentences = df['detalles_limpios'].dropna().tolist()
+    
+    print(f"Número de oraciones cargadas: {len(sentences)}")
+    print("\nPrimeras 5 oraciones:")
+    for i, sent in enumerate(sentences[:5]):
+        print(f"{i+1}: {sent}")
+        
+except FileNotFoundError:
+    print("Error: No se encontró el archivo 'dataset_limpio.csv'")
+    print("Asegúrate de que el archivo esté en el mismo directorio")
+    sentences = []
+except Exception as e:
+    print(f"Error al cargar el dataset: {e}")
+    sentences = []
+
+# PROCESAR EL CORPUS
 docs = []
 count = 0
+
+print("\nProcesando documentos con spaCy...")
 for item in sentences:
-    docs.append(nlp(item))
+    # Si la columna ya está tokenizada (como lista de strings), unir los tokens
+    if isinstance(item, list):
+        item = ' '.join(item)
+    elif isinstance(item, str) and '[' in item and ']' in item:
+        # Si parece una lista en formato string, intentar limpiarla
+        item = re.sub(r'[\[\]\'\"]', '', item)
+    
+    doc = nlp(str(item))  # Asegurar que sea string
+    docs.append(doc)
     count += 1
-corpus = [[x.text for x in y] for y in docs]
-#print(corpus)
+    
+    # Mostrar progreso cada 100 documentos
+    if count % 100 == 0:
+        print(f"Procesados {count} documentos...")
 
-model = Word2Vec(corpus, min_count = 1, workers = 3, window = 10, sg = 1)
+print(f"Total de documentos procesados: {count}")
 
-x_vals, y_vals, labels = reduce_dimensions(model)
+# Crear el corpus para Word2Vec
+corpus = []
+for doc in docs:
+    # Extraer tokens que no sean stopwords, sean alfabéticos y tengan más de 1 carácter
+    doc_tokens = [token.text.lower() for token in doc 
+                 if not token.is_stop and token.is_alpha and len(token.text) > 1]
+    if doc_tokens:  # Solo agregar si hay tokens
+        corpus.append(doc_tokens)
 
-plot_with_matplotlib(x_vals, y_vals, labels)
+print(f"Tamaño del corpus: {len(corpus)} documentos")
+print(f"Total de tokens únicos: {len(set([token for doc in corpus for token in doc]))}")
+
+# Entrenar el modelo Word2Vec
+if len(corpus) > 0:
+    print("\nEntrenando modelo Word2Vec...")
+    # Parámetros para la función Word2Vec:
+        # min_count = 2: Ignora palabras que solo salen una vez
+        # workers = 3: Usar 3 hilos para entrenar el modelo
+        # window = 5: Contexto de 5 palabras a la izquierda y derecha
+        # sg = 1: Usar skip-gram (en lugar de CBOW)
+        # vector_size = 100: Tamaño de los vectores de palabras
+    model = Word2Vec(corpus, min_count = 2, workers = 3, window = 5, sg = 1, vector_size = 100)
+
+    print(f"Vocabulario del modelo: {len(model.wv.key_to_index)} palabras")
+    print("\nEjemplo de palabras similares:")
+    
+    # Mostrar algunas palabras similares como ejemplo
+    if len(model.wv.key_to_index) > 0:
+        try:
+            example_word = list(model.wv.key_to_index.keys())[0]
+            similar_words = model.wv.most_similar(example_word, topn=5)
+            print(f"Palabras similares a '{example_word}':")
+            for word, score in similar_words:
+                print(f"  {word}: {score:.3f}")
+        except:
+            print("No se pudieron calcular similitudes para la primera palabra")
+    
+    # Reducir dimensiones y graficar
+    print("\nReduciendo dimensiones con t-SNE...")
+    x_vals, y_vals, labels = reduce_dimensions(model)
+    
+    print("Generando gráfico...")
+    plot_with_matplotlib(x_vals, y_vals, labels)
+    
+else:
+    print("No hay suficiente datos en el corpus para entrenar el modelo")
